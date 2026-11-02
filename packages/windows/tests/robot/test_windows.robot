@@ -1,0 +1,605 @@
+*** Settings ***
+Resource   keywords.robot
+Test Setup      Set Wait Time    0.7
+Default Tags      windows   skip
+
+
+*** Test Cases ***
+Test App Inspect Tree
+    [Documentation]     Print the UIAutomation tree of the test app for locator discovery.
+    [Tags]    manual
+    [Setup]     Start Test App
+    
+    Control Window    ${LOC_TESTAPP}
+    Print Tree    log_as_warnings=${True}
+    
+    [Teardown]  Stop Test App
+      
+Windows search Calculator by clicking buttons
+    Windows Search    Calculator    wait_time=1
+    Calculator button actions
+    [Teardown]    Close Current Window And Sleep
+
+Calculator by clicking buttons already running
+    [Tags]  manual  # Calculator should be already open.
+    Calculator button actions
+
+Windows run Do some calculations
+    Windows Run    ${EXE_CALCULATOR}    wait_time=1
+    Calculator with keys
+    [Teardown]    Close Current Window And Sleep
+
+Windows run Do some calculations already running
+    [Tags]  manual  # Calculator should be already open.
+    Calculator with keys
+
+Play Task Calculator
+    [Documentation]    Checks if 34+6=40
+    Windows Search    Calculator    wait_time=1
+    Control Window    Calculator
+    Click    id:clearButton
+    ${button_locator} =    Set Variable
+    ...    type:Group and name:"Number pad" > type:Button
+    # It is optional to use "and" in the locator syntax. (only "and"s are assumed)
+    Click    ${button_locator} and index:4    # "3"
+    Click    ${button_locator} index:5 offset:0,0    # "4"
+    # NOTE(cmin764): On different Windows versions the app UI differs so the offsets.
+    #    (might be also resolution bound)
+    ${ver} =    Get OS Version
+    IF    "${ver}" == "11"
+        ${offset} =    Set Variable    480,100
+    ELSE
+        ${offset} =    Set Variable    370,0    # FIXME on Windows 10
+    END
+    # Click the "+" button relative to "4" by offset.
+    Click    ${button_locator} index:5 offset:${offset}    # "+"
+    # "control" maps to same thing as "type" -> "ControlType".
+    Click    control:Group and name:"Number pad" > control:Button index:7    # 6
+    Click    id:equalButton    # "="
+    ${result} =    Get Attribute    id:CalculatorResults    Name
+    Should Be Equal    ${result}    Display is 40
+    [Teardown]    Close Current Window
+
+Play Task Temperature
+    Windows Search    Calculator    wait_time=1
+    Control Window    Calculator
+
+    Calculator Temperature Converter View
+    Log To Console    \nGet temperatures
+    Select Temperature Unit    Kelvin    225
+    Get Temperature Values    Fahrenheit
+    Select Temperature Unit    Fahrenheit    225
+    Get Temperature Values    Kelvin
+    Select Temperature Unit    Celsius    225
+    Get Temperature Values    Kelvin,Fahrenheit
+
+    Calculator Standard View
+    [Teardown]    Close Current Window
+
+Play Task UIDemo
+    Windows Run    ${EXE_UIDEMO}
+    Control Window    UiDemo
+    Send Keys    id:user    admin
+    Send Keys    id:pass    password
+    Click    class:Button
+    Control Window    UIDemo
+    Set Anchor    id:DataGrid    10.0
+    ${headers} =    Get Elements    type:HeaderItem
+    Log To Console    Headers: ${headers}
+    ${rows} =    Get Elements    class:DataGridRow name:"UiDemo.DepositControl+LineOfTable"
+    FOR    ${row}    IN    @{rows}
+        ${columns} =    Get Elements    class:DataGridCell    root_element=${row}
+        FOR    ${col}    IN    @{columns}
+            Log To Console    Cell value: ${col.name}
+        END
+    END
+    ${element} =    Get Element    type:HeaderItem
+    Screenshot    ${element}    ${OUTPUT_DIR}${/}element${element.name}.png
+    ${name} =    Get Attribute    ${element}    Name
+    Log To Console    Attribute: ${name}
+    # Clears set anchor above so the clicks would work on the current active window.
+    Clear Anchor
+    Control Window    UIDemo    # Handle: 5901414
+    Click
+    ...    type:ButtonControl and class:Button and name:Exit > type:TextControl and class:TextBlock and name:Exit
+    ...    timeout=1
+    # TODO: Add more actions to the task: slider, checkboxes, table (get/set vals).
+    [Teardown]    Close Current Window
+
+Resize window with Spotify
+    [Tags]  manual  # Spotify should be installed and available to use.
+
+    Windows Run    ${EXE_SPOTIFY}
+    ${window} =    Control Window    executable:${EXE_SPOTIFY}
+    Log To Console    Spotify window: ${window}
+
+    Maximize Window
+    ${spotify_playcontrol} =    Set Variable
+    ...     name:"Player controls" > control:ButtonControl and name:
+    ${spotify_next} =   Set Variable    ${spotify_playcontrol}Next
+    FOR    ${_}    IN RANGE    3
+        Click    ${SPOTIFY_NEXT}
+        Sleep    3s
+    END
+
+    Minimize Window
+    Sleep    1s
+    Maximize Window
+    Sleep    2s
+    Foreground Window
+    Restore Window
+
+    [Teardown]    Close Current Window
+
+Notepad write text into a file
+    [Setup]     Windows Run    notepad
+
+    Control Window    ${LOC_NOTEPAD}
+    ${ver} =    Get OS Version
+    IF    "${ver}" == "11"
+        Click    Edit    wait_time=0.5
+        Click    Font    wait_time=0.5    # for some reason this only highlitghts the button
+        Click    Font    wait_time=2    # and this finally clicks it
+
+        Click    id:FontFamilyComboBox
+        Send Keys   keys={DOWN}
+        Send Keys   keys={Ctrl}a{Del}
+        Send Keys   keys=Lucida Sans Unicode    send_enter=${True}    wait_time=0.5
+
+        Select  id:FontSizeComboBox     22
+        # If the Select above doesn't work.
+#        Click    id:FontSizeComboBox
+#        Send Keys   keys={DOWN}
+#        Send Keys   keys={Ctrl}a{Del}
+#        Send Keys   keys=22     send_enter=${True}    wait_time=0.5
+
+        Click    name:"Back"
+    ELSE
+        Control Window    Font
+        Click    type:MenuBar name:Application > name:Format
+        Click    name:Font...
+        Select    type:ComboBox id:1136    Trebuchet MS
+        Select    type:ComboBox id:1138    28
+        Click    type:Button name:OK
+    END
+    Control Window    ${LOC_NOTEPAD}
+    Send Keys    keys={Ctrl}a{Del}
+    Send Keys    keys=Lets add some text to the notepad
+    Control Window    ${LOC_NOTEPAD}
+    IF    "${ver}" == "11"
+        Click    File    wait_time=0.3
+        Click    Save as
+        Click    Save as    wait_time=1.5
+    ELSE
+        Click    type:MenuBar name:Application > name:File
+        Click    type:MenuItem subname:"Save As"
+    END
+    Send Keys    keys=best-win-auto.txt{Enter}    interval=0.05
+    ${run} =    Run Keyword And Ignore Error    Control Window    Confirm Save As    timeout=0.5
+    IF    "${run}[0]" == "PASS"
+        Click    Yes    wait_time=0.3
+    END
+    Minimize Window    ${LOC_NOTEPAD}
+
+    [Teardown]    Close Current Window
+
+Control Window by handle
+    Log To Console    \nList Windows
+    ${win} =    List Windows
+    FOR    ${w}    IN    @{win}
+        Log To Console    ${w}
+    END
+    ${win} =    Control Window    handle:${win}[0][handle]    # handle of the first window in the list
+    Log To Console    Controlled window: ${win}
+
+Calculator result from recording
+    Windows Run    Calc
+    Control Window    Calculator    # Handle: 4066848
+
+    Calculator Standard View
+    Click    name:"Seven"
+    Click    name:"Eight"
+    Click    name:"Nine"
+    Click    name:"Plus"
+    Click    name:"One"
+    Click    name:"Two"
+    Click    name:"Three"
+    Click    name:"Equals"
+
+    [Teardown]    Close Current Window
+
+Write to Notepad in the background
+    [Tags]  manual  # The text editing element can't be found anymore.
+    [Setup]     Windows Run    Notepad
+
+    Windows Run    Calc
+    Clear Anchor
+    Control Window    ${LOC_NOTEPAD}    foreground=${False}
+    # All the following keyword calls will use the set anchor element as root locator,
+    #  UNLESS they specify a locator / root element explicitly or `Clear Anchor` is
+    #  used.
+    Set Anchor    regex:"Text (E|e)ditor"
+
+    # Write in Notepad while having Calculator as active window.
+    Control Window    Calculator
+    # Clear Notepad edit window by writing initial text, then append rest of the text.
+    ${time} =    Get Time
+    Set Value    value=time now is ${time}    # clears when append=${False} (default)
+    Set Value    value= and it's the task run time    append=${True}    newline=${True}
+    Set Value    value=this will appear on the 2nd line    append=${True}
+    Set Value    value=${EMPTY}    append=${True}    enter=${True}
+
+    Close Current Window    # this closes Calculator first (as active window)
+    [Teardown]    Close Window    ${LOC_NOTEPAD}    # finally Notepad is closed too
+
+Test getting elements
+    Clear Anchor
+    ${ver} =    Get OS Version
+    ${desktop} =    Get Element     desktop
+    IF    "${ver}" == "11"
+        ${buttons} =    Get Elements    id:TaskbarFrameRepeater > type:Button    root_element=${desktop}
+    ELSE
+        ${buttons} =    Get Elements    name:"Running applications" > type:Button    root_element=${desktop}
+    END
+    Log To Console    \nList Taskbar applications\n
+    Log To Console    Desktop: ${desktop}
+    FOR    ${button}    IN    @{buttons}
+        Log To Console    App: ${button.name}
+    END
+
+Control window after closing linked root element
+    [Setup]    Keep open a single Notepad
+    ${window} =    Control Window    ${LOC_NOTEPAD} control:WindowControl
+    Log    Controlling Notepad window: ${window}
+    Kill app by name    Notepad
+    Windows Run    Calc
+    # Tests against `COMError` fixes.
+    ${window} =    Control Window    ${LOC_CALCULATOR}    main=${False}
+    Log    Controlling Calculator window: ${window}
+    [Teardown]    Close Current Window    # closes Calculator (last active window)
+
+Tree printing and controlled anchor cleanup
+    Windows Run    Calc
+    ${win} =    Control Window    ${LOC_CALCULATOR}    timeout=${TIMEOUT}
+    Set Anchor    ${win}
+    ${elem} =    Get Element    # pulls the anchor
+    Should Be Equal    ${elem.name}    Calculator
+    Close Window    ${LOC_CALCULATOR}    timeout=${TIMEOUT}
+    # With the controlled Calculator closed and active window/anchor cleaned up, we
+    #    should get the Desktop element only.
+    ${elem} =    Get Element
+    Should Be Equal    ${elem.name}    Desktop 1
+
+Click Calculator Numeric Buttons
+    [Documentation]    Clicks all the numeric buttons in Calculator
+
+    Windows Run    Calc
+    Control Window    ${LOC_CALCULATOR}
+    @{buttons} =    Get Elements    id:NumberPad > class:Button
+    FOR    ${button}    IN    @{buttons}
+        ${is_numeric} =    Evaluate    "num" in "${button.item.AutomationId}"
+        IF    ${is_numeric}
+            Click    ${button}    wait_time=0.2
+        END
+    END
+
+    [Teardown]  Close Current Window
+
+Log All Calculator Buttons Matching Expression
+    [Documentation]    Logs all the buttons in the controlled window if they contain
+    ...     an 'o' in their name.
+    [Setup]   Windows Run    Calc
+
+    Control Window    ${LOC_CALCULATOR}
+    @{buttons} =    Get Elements    class:Button regex:.*o.*
+    ...     siblings_only=${False}  # this will search globally for such buttons
+    Log List    ${buttons}
+    ${length} =     Get Length      ${buttons}
+    Log To Console      Number of buttons: ${length}
+
+    [Teardown]  Close Current Window
+
+Retrieve Nested Notepad Elements
+    [Documentation]     Try to unfold menu items until being able to retrieve a deep
+    ...     element inside the tree as soon as it becomes visible.
+    [Setup]   Windows Run    Notepad
+
+    Control Window      ${LOC_NOTEPAD}
+    Click   View
+    Click   Zoom
+    ${zoom_in} =   Get Element     Zoom in
+    Log To Console      "Zoom in" item: ${zoom_in}
+
+    [Teardown]  Close Current Window
+
+Test Desktop Searching
+    [Documentation]     Test some odd scenarios of elements retrieval.
+
+    @{desktops} =     Get Elements  desktop     siblings_only=${False}
+    Log List    ${desktops}
+
+Test Locator Path Strategy
+    [Documentation]     Check elements retrieval and tree printing with a path of
+    ...     element indexes. (node positions in the tree)
+    [Setup]     Windows Run     ${EXE_CALCULATOR}
+
+    # Retrieve the "One" button from a root parent.
+    ${elem} =   Get Element     Calculator > path:2|3|2|8|2 offset:120,0
+    Should Be Equal     ${elem.name}    One
+    Click   ${elem}  # clicks with offset too, even if found by path (Two button)
+
+    # Get all the numeric buttons using a path parent.
+    ${elems} =   Get Elements     Calculator > path:2|3|2|8 > type:ButtonControl
+    @{names} =   Create List
+    FOR     ${btn}   IN     @{elems}
+        Append To List  ${names}    ${btn.name}
+    END
+    List Should Contain Value   ${names}    Four
+
+    # Check the structure returned by the tree printing.
+    ${tree} =   Print Tree      Calculator > path:2|3|2|8   return_structure=${True}
+    ...     capture_image_folder=${RESULTS}${/}images   log_as_warnings=${True}
+    Log To Console      ${tree}
+    # Check if the fifth control on level 2 in the tree is actually the "Four" button.
+    ${elem} =   Set Variable    ${tree}[${2}][${5 - 1}]
+    @{names} =  Create List     ${elem.name}
+    Should Contain Any      ${names}    Four    4
+
+    [Teardown]      Close Window   ${LOC_CALCULATOR}
+
+Click and set values in WordPad
+    [Documentation]     Set values in WordPad while text editor widget isn't in focus.
+    ...    (note that an additional '\r' is added with each value set, not in our
+    ...    control)
+    [Setup]     Windows Run     Wordpad
+
+    # Just control the main window and click the title bar.
+    Control Window      ${LOC_WORDPAD}
+    Click   id:TitleBar and type:TitleBarControl
+
+    # Enable mouse movement simulation while changing the page size.
+    ${old} =    Set Mouse Movement     ${True}
+    Should Be True      "${old}" == "False"  # disabled by default
+    Click   name:View
+    Click   File tab
+    Click   Page setup
+    Select  name:Size: class:ComboBox   A4
+    Send Keys   keys={Enter}
+    # Disable mouse movement simulation.
+    ${old} =    Set Mouse Movement     ${False}
+    Should Be True      "${old}" == "True"  # was enabled before
+
+    # Note that one additional `\r` (Windows EOL) is added by the app itself in this
+    #  scenario.
+    ${text_locator} =   Set Variable    name:"Rich Text Window"
+    ${elem} =   Set Value   ${text_locator}     This i
+    Set Value   ${elem}     s my test text.     append=${True}
+    Set Value   ${elem}     append=${True}      enter=${True}
+    Set Value   ${elem}     2nd line text.   append=${True}    newline=${True}
+    ${text} =   Get Value   ${elem}
+    Should Be Equal     ${text}     This i\rs my test text.\r\r\r2nd line text.\r\r
+
+    [Teardown]  Close Current Window
+
+*** Test Cases ***
+
+
+Test App Inspect Tree
+    [Documentation]     Print the UIAutomation tree of the test app for locator discovery.
+    [Tags]    manual
+    [Setup]     Start Test App
+
+    Control Window    ${LOC_TESTAPP}
+    Print Tree    log_as_warnings=${True}
+
+    [Teardown]  Stop Test App
+
+
+Test App Checkboxes
+    [Documentation]     Verify Get Checkbox State returns correct values for
+    ...                 checked, unchecked and indeterminate checkboxes (issue #1166).
+    ...                 NOTE: tkinter does not expose UIAutomation attributes — run
+    ...                 Test App WX Checkboxes for the automated version of this test.
+    [Tags]    manual
+    [Setup]     Start Test App
+
+    # Navigate to the "Basic Controls" tab (it is the first tab, already active).
+    Control Window    ${LOC_TESTAPP}
+
+    # Checked checkbox — should return True
+    ${state} =    Get Checkbox State    name:Checked
+    Should Be True    ${state}    msg=Expected 'Checked' checkbox to be True
+
+    # Unchecked checkbox — should return False
+    ${state} =    Get Checkbox State    name:Unchecked
+    Should Be True    ${state} == ${False}    msg=Expected 'Unchecked' checkbox to be False
+
+    # Indeterminate checkbox — should return None
+    ${state} =    Get Checkbox State    name:"Indeterminate (tri-state)"
+    Should Be Equal    ${state}    ${None}    msg=Expected indeterminate checkbox to be None
+
+    [Teardown]  Stop Test App
+
+Test App Radio Buttons
+    [Documentation]     Verify Is Selected works on radio buttons inside the test app.
+    [Tags]    manual
+    [Setup]     Start Test App
+
+    Control Window    ${LOC_TESTAPP}
+
+    # "Option A" starts selected
+    ${selected} =    Is Selected    name:"Option A"
+    Should Be True    ${selected}
+
+    # "Option B" starts unselected
+    ${selected} =    Is Selected    name:"Option B"
+    Should Be True    ${selected} == ${False}
+
+    [Teardown]  Stop Test App
+
+Test App Text Entry
+    [Documentation]     Set and get values in single-line text entry.
+    ...                 NOTE: tkinter does not expose UIAutomation attributes — manual only.
+    [Tags]    manual
+    [Setup]     Start Test App
+
+    Control Window    ${LOC_TESTAPP}
+
+    # The LabelFrame "Text Entry" is a Group with Name="Text Entry".
+    # The first EditControl inside it is the single-line entry.
+    ${entry} =    Get Element
+    ...    name:"Text Entry" > type:EditControl
+    Set Value    ${entry}    New text value
+    ${val} =    Get Value    ${entry}
+    Should Contain    ${val}    New text value
+
+    [Teardown]  Stop Test App
+
+Test App Combobox
+    [Documentation]     Select a value from the combobox and confirm via Get Value.
+    ...                 NOTE: tkinter does not expose UIAutomation attributes — manual only.
+    [Tags]    manual
+    [Setup]     Start Test App
+
+    Control Window    ${LOC_TESTAPP}
+
+    # Switch to the "Input Controls" tab
+    Click    name:"Input Controls"
+
+    # Combobox UIAutomation Name = currently selected value ("Apple" on start).
+    Select    name:Apple    Banana
+    # After selection the combobox Name changes to "Banana" — locate and confirm.
+    ${elem} =    Get Element    name:Banana
+    ${val} =    Get Value    ${elem}
+    Should Be Equal    ${val}    Banana
+
+    [Teardown]  Stop Test App
+
+Test App Slider
+    [Documentation]     Move the slider and verify its value changes.
+    ...                 The ttk.Scale widget is a SliderControl in UIAutomation.
+    ...                 The exact locator depends on how Windows exposes the widget name;
+    ...                 update the locator after inspecting with Accessibility Insights.
+    [Tags]      manual
+    [Setup]     Start Test App
+
+    Control Window    ${LOC_TESTAPP}
+
+    Click    name:"Input Controls"
+
+    # Locate the slider within the "Slider" LabelFrame (Group) by control type.
+    ${slider} =    Get Element
+    ...    name:Slider > type:SliderControl
+    Set Value    ${slider}    75
+    ${val} =    Get Value    ${slider}
+    Should Be True    ${val} >= 70
+
+    [Teardown]  Stop Test App
+
+Test App Path Locator Timeout
+    [Documentation]     Trigger a delayed element (3 s) and assert that a locator with
+    ...                 timeout=5 finds it while timeout=1 raises ElementNotFound
+    ...                 (exercises the path: timeout fix, issue #1125).
+    ...                 NOTE: tkinter does not expose UIAutomation attributes — run
+    ...                 Test App WX Path Locator Timeout for the automated version.
+    [Tags]    manual
+    [Setup]     Start Test App
+
+    Control Window    ${LOC_TESTAPP}
+
+    Click    name:"Dynamic Controls"
+
+    # The label should NOT exist yet — a short timeout must raise quickly.
+    ${result} =    Run Keyword And Ignore Error
+    ...    Get Element
+    ...    name:dynamic_label
+    ...    timeout=0.5
+    Should Be Equal    ${result}[0]    FAIL    msg=Short timeout should have failed
+
+    # Now show after 3 s delay, then find it within 5 s timeout.
+    Click    name:"Show after 3s"
+    ${elem} =    Get Element
+    ...    name:dynamic_label
+    ...    timeout=5
+    Should Not Be Equal    ${elem}    ${None}
+
+    [Teardown]  Stop Test App
+
+
+
+
+Test App WX Checkboxes
+    [Documentation]     Verify Get Checkbox State against the wxPython test app.
+    ...                 wxPython uses native Win32 controls that expose proper
+    ...                 UIAutomation TogglePattern (issue #1166).
+    [Setup]     Start Test App WX
+
+    # Checked checkbox — should return True
+    ${state} =    Get Checkbox State    name:Checked
+    Should Be True    ${state}    msg=Expected 'Checked' checkbox to be True
+
+    # Unchecked checkbox — should return False
+    ${state} =    Get Checkbox State    name:Unchecked
+    Should Be True    ${state} == ${False}    msg=Expected 'Unchecked' checkbox to be False
+
+    # Indeterminate (tri-state) checkbox — should return None
+    ${state} =    Get Checkbox State    name:Indeterminate
+    Should Be Equal    ${state}    ${None}    msg=Expected indeterminate checkbox to be None
+
+    [Teardown]  Stop Test App WX
+
+
+Test App WX Path Locator Timeout
+    [Documentation]     Verify the path: locator timeout fix (issue #1125) using the
+    ...                 wxPython test app.  "Show after 3s" creates a StaticText
+    ...                 control after a 3-second delay.  A 0.5 s timeout must fail
+    ...                 fast; a 5 s timeout must succeed.
+    [Setup]     Start Test App WX
+
+    # Element does not exist yet — short timeout must fail quickly.
+    ${result} =    Run Keyword And Ignore Error
+    ...    Get Element    name:DynamicContent    timeout=0.5
+    Should Be Equal    ${result}[0]    FAIL    msg=Short timeout should have failed
+
+    # Trigger the 3-second delayed element, then find it within 8 s.
+    Click    name:"Show after 3s"
+    Sleep    0.5s
+    ${elem} =    Get Element    name:DynamicContent    timeout=8
+    Should Not Be Equal    ${elem}    ${None}
+
+    [Teardown]  Stop Test App WX
+
+Test App WX Radio Buttons
+    [Documentation]     Verify Is Selected returns correct values for radio buttons.
+    ...                 "Option A" starts selected; "Option B" starts unselected.
+    [Setup]     Start Test App WX
+
+    ${sel_a} =    Is Selected    name:"Option A"
+    Should Be True    ${sel_a}
+
+    ${sel_b} =    Is Selected    name:"Option B"
+    Should Be True    ${sel_b} == ${False}
+
+    [Teardown]  Stop Test App WX
+
+Test App WX Text Entry
+    [Documentation]     Set and read a value from the single-line text entry (EditControl).
+    [Setup]     Start Test App WX
+
+    ${entry} =    Get Element    type:EditControl
+    Set Value    ${entry}    Hello RPA
+    ${val} =    Get Value    ${entry}
+    Should Be Equal    ${val}    Hello RPA
+
+    [Teardown]  Stop Test App WX
+
+Test App WX Combobox
+    [Documentation]     Select "Banana" from the combobox and confirm via Get Value.
+    [Setup]     Start Test App WX
+
+    Select    type:ComboBoxControl    Banana
+    ${elem} =    Get Element    type:ComboBoxControl
+    ${val} =    Get Value    ${elem}
+    Should Be Equal    ${val}    Banana
+
+    [Teardown]  Stop Test App WX
