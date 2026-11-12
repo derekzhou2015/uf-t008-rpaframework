@@ -4,6 +4,7 @@ import fnmatch
 import json
 import logging
 import os
+import re
 from abc import ABC, abstractmethod
 from enum import Enum
 from pathlib import Path
@@ -801,6 +802,36 @@ class WorkItems:
     parsed e-mail data gets stored into), value which can be customized and retrieved
     with ``Get Work Item Variable``.
 
+    **Dot-separated paths**
+
+    The source and destination keys above are dot-separated paths into the
+    payload. A path segment names a dictionary key, or a zero-based list index
+    when the value at that point is a list, so ``email.attachments.0.Body``
+    reads the ``Body`` key of the first attachment. A path that can't be fully
+    resolved produces a warning in the log (and the e-mail content is left
+    unparsed), it is never silently ignored.
+
+    Since the dot always acts as a path separator, payload key names literally
+    containing a dot (e.g. ``my.key``) can't be addressed through this syntax.
+    Such keys have to be read directly with ``Get Work Item Variable    my.key``
+    (top-level keys) or renamed to not contain dots.
+
+    **E-mail body interpretation**
+
+    A text e-mail body is automatically interpreted as structured data only
+    when it is clearly meant to be, otherwise the original text is preserved
+    as-is. The exact criteria:
+
+    - **JSON**: the entire body parses as a JSON object or array. (Bare JSON
+      scalars like ``123`` or ``"text"`` stay plain text.)
+    - **YAML**: the body parses into a dictionary or list AND shows explicit
+      YAML structure -- a ``---`` document marker or at least two structural
+      lines (``key:`` mapping entries or ``- `` sequence items). A lone
+      ``key: value`` line is considered plain text, since it is
+      indistinguishable from prose like ``Order: 12345``.
+    - Anything else (plain prose, dates, numbers, single values) is kept as
+      the original untouched text.
+
     **Creating outputs**
 
     It's possible to create multiple new work items as an output from a
@@ -932,6 +963,14 @@ class WorkItems:
         ("YAML", yaml.full_load),
     ]
 
+    # A line carrying explicit YAML structure: a ``key:`` mapping entry or a
+    # ``- `` sequence item. (A colon followed by anything else than whitespace
+    # or end-of-line, like in URLs or Windows paths, doesn't count.)
+    _YAML_STRUCTURE_LINE = re.compile(r"^\s*(?:-(?:\s|$)|[^\s:][^:]*:(?:\s|$))")
+    # Minimum amount of structural lines for a YAML body to be considered
+    # reliably structured instead of plain text.
+    _YAML_MIN_STRUCTURE_LINES = 2
+
     def __init__(  # pylint: disable=dangerous-default-value
         self,
         autoload: bool = True,
@@ -1002,10 +1041,43 @@ class WorkItems:
         return adapter
 
     @classmethod
-    def _interpret_content(cls, body: str) -> Union[dict, str]:
+    def _is_reliable_structure(cls, loader_name: str, body: str, parsed: Any) -> bool:
+        """Decides if a deserialized e-mail body is reliable structured data.
+
+        The criteria (per loader) are:
+
+        - Any loader: only `dict`/`list` results qualify. Scalars (strings,
+          numbers, dates, booleans, nulls) are indistinguishable from plain
+          text, so the original body is kept for them.
+        - JSON: a fully parsed JSON object or array is unambiguous, since
+          plain prose never parses as JSON.
+        - YAML: plain text easily parses as YAML by accident, so additional
+          explicit structure is required -- either a ``---`` document marker
+          or at least `_YAML_MIN_STRUCTURE_LINES` lines carrying YAML
+          structure (``key:`` mapping entries or ``- `` sequence items).
+        """
+        if not isinstance(parsed, (dict, list)):
+            return False
+        if loader_name == "JSON":
+            return True
+        if body.lstrip().startswith("---"):
+            return True
+        structural = sum(
+            1 for line in body.splitlines() if cls._YAML_STRUCTURE_LINE.match(line)
+        )
+        return structural >= cls._YAML_MIN_STRUCTURE_LINES
+
+    @classmethod
+    def _interpret_content(cls, body: str) -> Union[dict, list, str]:
+        """Interprets the e-mail `body` as structured data when clearly meant so.
+
+        Returns the parsed `dict`/`list` for bodies reliably identified as
+        JSON/YAML structures (see `_is_reliable_structure` for the exact
+        criteria) and the untouched original text otherwise.
+        """
         for name, loader in cls.EMAIL_BODY_LOADERS:
             try:
-                body = loader(body)
+                parsed = loader(body)
             except Exception as exc:  # pylint: disable=broad-except
                 logging.debug(
                     "Failed deserializing input e-mail body content with loader %r "
@@ -1013,8 +1085,14 @@ class WorkItems:
                     name,
                     exc,
                 )
-            else:
-                break
+                continue
+            if cls._is_reliable_structure(name, body, parsed):
+                return parsed
+            logging.debug(
+                "E-mail body parsed with loader %r but the result is not a "
+                "reliable structure, keeping it as plain text",
+                name,
+            )
 
         return body
 
@@ -1033,8 +1111,24 @@ class WorkItems:
             for input_key in input_keys:
                 try:
                     content = get_dot_value(variables, input_key)
-                except AttributeError:
+                except KeyError as exc:
                     content = None  # couldn't reach final destination
+                    # A path whose first segment exists was clearly meant to
+                    # resolve (e.g. custom `auto_parse_email` mapping), so a
+                    # failure deeper down is warned about instead of being
+                    # silently skipped. Fully absent paths are just probed
+                    # candidate locations, logged at debug level.
+                    first_segment = input_key.split(".", 1)[0]
+                    log = (
+                        logging.warning
+                        if first_segment in variables
+                        else logging.debug
+                    )
+                    log(
+                        "Can't extract e-mail content from %r: %s",
+                        input_key,
+                        exc.args[0] if exc.args else exc,
+                    )
                 if not content and input_key in file_list:
                     path = Path(self.get_work_item_file(input_key))
                     content = path.read_text(encoding=ENCODING)

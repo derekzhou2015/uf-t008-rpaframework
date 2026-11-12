@@ -15,7 +15,12 @@ except ImportError:
 import pytest
 from requests import HTTPError
 
-from RPA.Robocorp.utils import DEBUG_ON, RequestsHTTPError, set_dot_value
+from RPA.Robocorp.utils import (
+    DEBUG_ON,
+    RequestsHTTPError,
+    get_dot_value,
+    set_dot_value,
+)
 from RPA.Robocorp.WorkItems import (
     ENCODING,
     BaseAdapter,
@@ -804,6 +809,155 @@ class TestLibrary:
 
         library.get_input_work_item()  # auto-parsing should pass without errors
         assert library.get_work_item_variable(source_var) == value  # left untouched
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            "Order: 12345",  # single key-value-looking line
+            "2021-01-01",  # date-like scalar
+            "yes",  # boolean-like scalar
+            "12345",  # number-like scalar
+            "Hello,\nOrder: 12345\nThanks",  # prose with a key-value-looking line
+            "A message from e-mail",  # plain prose
+        ],
+    )
+    def test_interpret_content_keeps_plain_text(self, body):
+        interpreted = WorkItems._interpret_content(body)
+        assert interpreted == body
+        assert isinstance(interpreted, str)
+
+    @pytest.mark.parametrize(
+        "body, expected",
+        [
+            ('{"message": "from email"}', {"message": "from email"}),
+            ("[1, 2, 3]", [1, 2, 3]),
+            (
+                "message: from email\nextra:\n  value: 1",
+                {"message": "from email", "extra": {"value": 1}},
+            ),
+            ("- one\n- two", ["one", "two"]),
+            ("---\nkey: value", {"key": "value"}),
+        ],
+    )
+    def test_interpret_content_parses_reliable_structures(self, body, expected):
+        assert WorkItems._interpret_content(body) == expected
+
+    @pytest.mark.parametrize("body", ["Order: 12345", "2021-01-01"])
+    def test_parse_work_item_plain_text_body_stays_text(self, library, body):
+        library.adapter.DATA["workitem-id-first"]["email"] = {"text": body}
+
+        library.get_input_work_item()
+        parsed_email = library.get_work_item_variable("parsedEmail")
+        assert parsed_email["Body"] == body
+        assert isinstance(parsed_email["Body"], str)
+
+    def test_parse_work_item_from_email_with_array_path(self, adapter):
+        library = WorkItems(
+            default_adapter=adapter,
+            auto_parse_email={
+                "email.attachments.0.Body": "parsedEmail.FirstAttachmentBody"
+            },
+        )
+        library.adapter.DATA["workitem-id-first"]["email"] = {
+            "attachments": [{"Body": "attachment body content"}]
+        }
+
+        library.get_input_work_item()
+        parsed_email = library.get_work_item_variable("parsedEmail")
+        assert parsed_email["FirstAttachmentBody"] == "attachment body content"
+
+    def test_parse_work_item_from_email_broken_array_path_warns(
+        self, adapter, caplog
+    ):
+        library = WorkItems(
+            default_adapter=adapter,
+            auto_parse_email={"email.attachments.5.Body": "parsedEmail.Body"},
+        )
+        library.adapter.DATA["workitem-id-first"]["email"] = {
+            "attachments": [{"Body": "attachment body content"}]
+        }
+
+        with caplog.at_level(logging.WARNING):
+            library.get_input_work_item()
+
+        warnings = [
+            record
+            for record in caplog.records
+            if record.levelno == logging.WARNING
+            and "email.attachments.5.Body" in record.message
+        ]
+        assert warnings, "broken dot-path should produce a clear warning"
+        # Nothing got silently half-extracted either.
+        with pytest.raises(KeyError):
+            library.get_work_item_variable("parsedEmail")
+
+
+class TestDotPaths:
+    """Tests for dot-separated path traversal in `RPA.Robocorp.utils`."""
+
+    PAYLOAD = {
+        "email": {
+            "text": "Hello",
+            "attachments": [
+                {"Body": "first", "Name": "a.txt"},
+                {"Body": "second", "Name": "b.txt"},
+            ],
+        },
+        "key.with.dots": "literal",
+    }
+
+    @pytest.mark.parametrize(
+        "path, expected",
+        [
+            ("email.text", "Hello"),
+            ("email.attachments.0.Body", "first"),
+            ("email.attachments.1.Name", "b.txt"),
+            ("email.attachments.-1.Body", "second"),
+        ],
+    )
+    def test_get_dot_value(self, path, expected):
+        assert get_dot_value(copy.deepcopy(self.PAYLOAD), path) == expected
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "missing.path",  # absent right away
+            "email.missing",  # missing dictionary key
+            "email.attachments.2.Body",  # list index out of range
+            "email.attachments.first.Body",  # non-integer list segment
+            "email.text.deeper",  # can't traverse into a string
+        ],
+    )
+    def test_get_dot_value_unresolvable(self, path):
+        with pytest.raises(KeyError):
+            get_dot_value(copy.deepcopy(self.PAYLOAD), path)
+
+    def test_get_dot_value_literal_dotted_key(self):
+        # Documented policy: a dot always acts as a path separator, so key
+        # names literally containing a dot can't be addressed with dot-paths.
+        with pytest.raises(KeyError):
+            get_dot_value(copy.deepcopy(self.PAYLOAD), "key.with.dots")
+        # Such keys remain reachable through direct dictionary access.
+        assert self.PAYLOAD["key.with.dots"] == "literal"
+
+    def test_set_dot_value(self):
+        payload = copy.deepcopy(self.PAYLOAD)
+
+        set_dot_value(payload, "email.attachments.0.Body", value="changed")
+        assert payload["email"]["attachments"][0]["Body"] == "changed"
+
+        set_dot_value(payload, "email.new_key", value="new")
+        assert payload["email"]["new_key"] == "new"
+
+    def test_set_dot_value_unresolvable(self):
+        payload = copy.deepcopy(self.PAYLOAD)
+        with pytest.raises(KeyError):
+            set_dot_value(payload, "email.attachments.5.Body", value="nope")
+        with pytest.raises(KeyError):
+            set_dot_value(payload, "email.text.deeper", value="nope")
+        # Intermediate parents are not implicitly created.
+        with pytest.raises(KeyError):
+            set_dot_value(payload, "brand.new", value="nope")
 
 
 class TestFileAdapter:

@@ -73,21 +73,87 @@ def log_more(message, *args, func=logging.debug):
         log_to_console(str(message) % args)
 
 
-def get_dot_value(source: Dict, key: str) -> Any:
-    """Returns the end value from `source` dictionary given `key` traversal."""
-    keys = key.split(".")
+def _to_list_index(segment: str, path: str) -> int:
+    """Convert a dot-path `segment` into a list index or raise a clear error."""
+    try:
+        return int(segment)
+    except ValueError:
+        raise KeyError(
+            f"Path {path!r}: segment {segment!r} is not a valid list index"
+        ) from None
+
+
+def get_dot_value(source: Union[Dict, List], key: str) -> Any:
+    """Returns the end value from `source` given a dot-separated `key` path.
+
+    Dictionaries are traversed by key name and lists by (zero-based) integer
+    index, so a path like ``email.attachments.0.Body`` reaches the ``Body`` key
+    of the first attachment. A dot always acts as a path separator, therefore
+    key names literally containing a dot can't be addressed through this
+    syntax.
+
+    :raises KeyError: if any path segment can't be resolved (missing key,
+        index out of range, non-integer list segment or a scalar found before
+        the path ends). The error message pinpoints the failing segment.
+    """
     value = source
-    for _key in keys:
-        value = value.get(_key)
+    traversed = []
+    for segment in key.split("."):
+        traversed.append(segment)
+        path = ".".join(traversed)
+        if isinstance(value, list):
+            index = _to_list_index(segment, path)
+            try:
+                value = value[index]
+            except IndexError:
+                raise KeyError(
+                    f"Path {path!r}: index {index} is out of range for a list "
+                    f"of length {len(value)}"
+                ) from None
+        elif isinstance(value, dict):
+            try:
+                value = value[segment]
+            except KeyError:
+                raise KeyError(f"Path {path!r}: key {segment!r} not found") from None
+        else:
+            raise KeyError(
+                f"Path {path!r}: can't traverse into value of type "
+                f"{type(value).__name__}"
+            )
     return value
 
 
-def set_dot_value(source: Dict, key: str, *, value: Any):
-    """Sets the end `value` into `source` dictionary given `key` destination."""
+def set_dot_value(source: Union[Dict, List], key: str, *, value: Any):
+    """Sets the end `value` into `source` given a dot-separated `key` path.
+
+    Follows the same traversal rules as `get_dot_value`: dictionaries by key
+    name, lists by integer index. The last segment names the dictionary key to
+    create/overwrite, or the list index to overwrite when the parent is a
+    list.
+
+    :raises KeyError: if the parent path can't be resolved or the last segment
+        isn't a valid list index for a list parent.
+    """
     keys = key.rsplit(".", 1)  # one or at most two parts
     if len(keys) == 2:
         source = get_dot_value(source, keys[0])
-    source[keys[-1]] = value
+    last = keys[-1]
+    if isinstance(source, list):
+        index = _to_list_index(last, key)
+        try:
+            source[index] = value
+        except IndexError:
+            raise KeyError(
+                f"Path {key!r}: index {index} is out of range for a list of "
+                f"length {len(source)}"
+            ) from None
+    elif isinstance(source, dict):
+        source[last] = value
+    else:
+        raise KeyError(
+            f"Path {key!r}: can't set a value into parent of type "
+            f"{type(source).__name__}"
+        )
 
 
 class RequestsHTTPError(HTTPError):
